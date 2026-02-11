@@ -1,0 +1,410 @@
+---
+title: "Statistics Final Project"
+author: "Uyen Wolff"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: lumen
+    #toc: true
+    #toc_float: true
+    #toc_depth: 3
+    #smooth_roll: true
+    highlight: tango
+
+---
+```{r setup, include=FALSE}
+xaringanExtra::use_clipboard(
+  button_text = "Copy Code",
+  success_text = "Copied"
+)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{css, echo=FALSE}
+/* Change the main body text size */
+body {
+  font-size: 18px;  /* Default is usually 14px or 16px */
+}
+
+/* Optional: Make the section headers larger too */
+h1 { font-size: 32px; }
+h2 { font-size: 28px; }
+h3 { font-size: 24px; }
+
+/* Optional: Make code blocks larger if they look too small now */
+pre {
+  font-size: 14px;
+}
+```
+## Scientific Background
+
+Nearly all somatic cells possess the same complete genome. A key process responsible for their distinct cellular identities is gene expression, by which the information encoded in a gene is converted into functional products, such as messenger RNA molecules that code for proteins, or non-coding RNAs that perform other functions. Gene expression is a finely tuned mechanism that controls the timing, location, and quantity of these products. By measuring transcript or protein levels, researchers can establish gene expression profiles. These profiles allow for the identification of cell-specific marker genes and the assessment of gene subsets involved in the biological state of cells under specific environmental, physiological, or pathological conditions.
+
+## Case Study
+
+Phase 2 clinical study evaluates the effectiveness and safety of Treatment M. This treatment targets Protein Y, a transcription factor for Gene X that has been previously established as a driver of Disease A progression. To quantify the treatment's effect, the relative expression of Gene X is measured in 100 patients before and after administration across different Dose levels. The influence of additional factors, such as Age, Gender, and Smoking status, is also considered.
+
+The scenario for simulating biological dataset is inspired by the synthetic ["Gene Expression Analysis and Disease Relationship"](https://www.kaggle.com/datasets/ylmzasel/gene-expression-analysis-and-disease-relationship) dataset on Kaggle. 
+
+## Study Objectives 
+
+The primary objective of this report is to demonstrate competency in formulating clinical hypotheses and selecting appropriate statistical methodologies. As this study utilizes synthetic data, the focus is on the process of analysis rather than the discovery of novel biological insights.
+
+To support this, the dataset was generated using a semi-synthetic approach. While the data stems from random distribution models to mimic natural variability, key parameters were adjusted to reflect the biological mechanisms described in Case Study. This ensures the data structure allows for meaningful application and interpretation of the proposed statistical tests.
+
+## Scientific Questions 
+
+The purpose of phase 2 clinical trial is to investigate the effectiveness and safety of a treatment M on patients with Disease A. 
+
+Questions about treatment effectiveness: 
+
+* Is the reduction in Gene X expression significantly greater in the Treatment M group compared to the Control group?
+
+* Is there a significant Dose-dependent difference in Gene X reduction between the 0mg (Control), 10mg, and 20mg treatment groups?
+
+* Do patient demographic factors (Age, Gender, Smoking status) significantly influence the treatment efficacy (Change in Gene X) when controlling for Dose?
+
+Questions about treatment safety: 
+
+* Is the frequency of reported adverse events significantly associated with the administered Dose level of Treatment M?
+
+## Data Simulation Strategy
+
+The dataset comprises 5 categorical and 5 numerical variables. The observations are independent, and random assignment was employed to mitigate selection bias.
+
+1. Scale of categorical variables 
+* Patient ID: nominal (PAxxx)
+* Biological gender: nominal (Female, Male)
+* Smoking status: nominal (None, Former, Current)
+* Treatment Response: ordinal (Control, Treatment M)
+* Adverse effect: ordinal (None, Mild Rash & Nausea, Heavy Rash & Nausea)
+
+2. Scale of numerical variables
+* Age: continuous ratio (20-60 years), can also be ordinal if range is defined
+* Baseline: continuous ratio (gene X relative expression before treatment)
+* FollowUp: continuous ratio (gene X relative expression after treatment)
+* Dose: continous ratio (0, 10, 20mg) but used as ordinal in this study
+* Difference: continuous ration (FollowUp - Baseline)
+
+Import required libraries
+
+```{r message = FALSE, warning = FALSE}
+library(tidyverse) # data wrangling
+library(ggplot2) # data visualization
+library(ggsignif) # map significance
+library(summarytools) # statistics summary
+library(DT) # render data table
+rm(list=ls()) # clean working environment
+```
+
+Generate a simulation dataset
+
+```{r message = FALSE, warning = FALSE}
+# set seed for reproducibility 
+set.seed(123)
+
+# display 3 decimal place number in output
+options(digits = 3)
+
+# sample size 
+N = 100
+
+# initialize data frame 
+df = data.frame(
+  PatientID = sprintf("PA%03d", 1:N),
+  # replace = T allows duplicated elements
+  Gender = factor(sample(c("Female", "Male"), N, replace = T), 
+                  levels = c("Female", "Male")), 
+  Smoking_status = factor(sample(c("Never", "Former", "Current"), N, replace = T), 
+                          levels = c("Never", "Former", "Current")),
+  Treatment = factor(sample(c("Control", "Treatment M"), N, replace = T,  prob = c(0.3, 0.7)), 
+                     levels = c("Control", "Treatment M"))
+  )
+
+#  assign dose (mg)
+df$Dose = factor(ifelse(df$Treatment == "Control", 0, sample(c("10", "20"), N, replace = T)), 
+                 levels = c("0", "10", "20"))
+
+# assign age
+df$Age = sample(20:60, N, replace = T) # integers in range of 20-60 years
+
+# add baseline of gene X in Disease A (smaller spread sd = 0.5 to get range: 4-7)
+df$Baseline = round(rnorm(N, mean = 5, sd = 0.5), 2)
+
+# create noises and effect of dose
+noise = rnorm(N, mean = 0, sd = 0.5)
+dose_effect = ifelse(df$Dose == 0, -0.1, -0.5)
+
+# calculate the followup of gene X corresponding to Dose (larger than 0)
+df$FollowUp = round(df$Baseline + dose_effect + noise, 2)
+
+# assign Dose adverse effect 
+effect_1 = c("None", "Mild Rash and Nausea")
+effect_2 = c("None", "Mild Rash and Nausea", "Heavy Rash and Nausea")
+df$Adverse_effect = factor(ifelse(df$Dose == 0, "None", 
+                           ifelse(df$Dose == 10, 
+                                  sample(effect_1, replace = T, prob = c(0.8, 0.2)),
+                                  sample(effect_2, replace = T, prob = c(0.5, 0.2, 0.3)))))
+
+# assign difference of gene X expression before and after treatment
+df$Difference = round(df$FollowUp - df$Baseline, 2)
+
+# PatientID as row names or indices
+df = df %>% column_to_rownames(var = "PatientID")
+
+# add data frame to search path
+attach(df)
+
+# inspect first 20 rows with scrollable table
+datatable(head(df, 20),
+          options = list(scrollX = TRUE),
+          style = "default")
+```
+
+## Descriptive Statistics
+
+Simple randomization produced a dataset mirroring expected biological variability. With the exception of Dose and Adverse effects, which were simulated to correlate with Treatment and Dose, respectively, all categorical variables displayed comparable distributions across the groups (e.g., Smoking Status: 26% Never, 35% Former, 39% Current, Treatment: 59% Control, 41% Treatment M). This confirms that the randomization process successfully prevented significant bias, i.e  one group does not end up significantly larger or different than the others due to random chance.
+
+```{r message = FALSE, warning = FALSE}
+# quick statistical overview of the dataset
+summary(df)
+```
+
+Notably, descriptive statistics reveal that the relative gene expression of Genes X approximates a normal distribution across treatments. 
+
+```{r message = FALSE, warning = FALSE}
+par(mfrow = c(1,2)) # graphical parameters: 1 rows, 2 columns
+
+# histogram of gene X before and after treatment
+hist(Baseline, breaks = 15, xlab = "")
+hist(FollowUp, breaks = 15, xlab = "")
+```
+
+Additionally, boxplots are used as a robust method to visualize the spread of the dataset and facilitate the detection of outliers (defined as values falling outside $1.5×IQR$). Although the boxplot of baseline gene X expression shows the presence of outlier(s), the value(s) does not significantly distort the central tendency, as the mean and median remain comparable (Gene X: $Mean = 4.98$, $Median = 5.01$).
+
+```{r message = FALSE, warning = FALSE}
+par(mfrow = c(1,2)) # graphical parameters: 1 rows, 2 columns
+
+# boxplots of gene X before and after treatment
+boxplot(Baseline, main = "Boxplot of Baseline", 
+        ylab = "Relative Expression", ylim = c(0,8))
+boxplot(FollowUp, main = "Boxplot of FollowUp", 
+        ylab = "Relative Expression", ylim = c(0,8))
+```
+
+## Inferential Statistics
+
+**1. Is the reduction in Gene X expression significantly greater in the Treatment M group compared to the Control group?**
+
+The normality of relative gene expression can also be assessed using a normal Q-Q plot or the Shapiro-Wilk normality test, where:
+
+$H_0$: *The data is drawn from a normal distribution*
+
+$H_a$: *The data is NOT drawn from a normal distribution*
+
+$α = 0.05$
+
+The Q-Q plot shows that the data aligns well with the theoretical distribution, and $p > 0.05$ in the Shapiro-Wilk test further support the assumption of normality.
+
+```{r message = FALSE, warning = FALSE}
+par(mfrow = c(1,2)) 
+
+# normal Q-Q plot for normality check 
+qqnorm(Baseline, main = "Normal Q-Q Plot for Baseline")
+qqline(Baseline)
+
+qqnorm(FollowUp, main = "Normal Q-Q Plot for FollowUp")
+qqline(FollowUp)
+
+# normality test
+shapiro.test(Baseline)
+shapiro.test(FollowUp)
+```
+
+$H_0$: *There is NO significant difference in Gene X expression before and after treatment*
+
+$H_a$: *There is a significant difference in Gene X expression before and after treatment*
+
+$α = 0.05$
+
+To test this hypothesis, a paired t-test was applied. This test is appropriate because the measurements within each patient are dependent (paired), while observations between different patients remain independent. The data satisfies the assumption of normality and contains no extreme outliers that would distort the central tendency.
+
+The paired t-test led to the rejection of the null hypothesis ($p < 0.05$), confirming a statistically significant reduction in Gene X expression following treatment. Treatment M lowered expression levels by an average of 0.453 units. 
+
+```{r message = FALSE, warning = FALSE}
+# paired t-test
+paired_t_test = t.test(Baseline, FollowUp, paired = TRUE, alternative = "two.sided")
+paired_t_test
+
+# annotate the p-value
+anno1 = paired_t_test$p.value
+
+# create a data frame for plotting
+df_to_plot = data.frame(Baseline, FollowUp) %>% gather("key", "value") %>% group_by("key")
+
+# plot gene X expression before and after treatment
+ggplot(data = df_to_plot, aes(x = key, y = value)) + 
+  geom_boxplot(width = 0.5, color = "black") +
+  geom_jitter(aes(color = key), width = 0.2) +
+  geom_signif(annotation = paste0("p-value = ", format(anno1, digits = 1)),
+              y_position = 7.5, xmin = 1, xmax = 2,
+              tip_length = c(0.2, 0.1)) + 
+  labs(title = "Gene X Expression Before and After Treatment") +
+  ylab("Relative Expression") +
+  xlab("") +
+  ylim(c(0, 8)) +
+  theme_bw() +
+  theme(legend.position = "none") 
+  
+```
+
+**2. Is there a significant Dose-dependent difference in Gene X reduction between the 0mg (Control), 10mg, and 20mg treatment groups?**
+
+To investigate whether the administered Dose level significantly affects the reduction in Gene X expression, a One-Way ANOVA was performed. This test compares the mean difference in gene expression across the three Dose levels (0mg, 10mg, and 20mg) to determine if there is a statistically significant variation between them.
+
+$H_0$: *There is NO significant difference in the mean reduction of Gene X expression across the three Dose levels*
+
+$H_a$: *At least one Dose level has a significantly different mean reduction in Gene X expression compared to the others* 
+
+$α=0.05$
+
+Analysis using One-Way ANOVA confirms that the administered Dose of Treatment M significantly impacts Gene X reduction ($p < 0.05$). All statistical assumptions for this test were satisfied normality ($p > 0.05$) and equal variances calculated by Bartlett's test ($p > 0.05$), where:
+
+$H_0$: *The group variances are equal*
+
+$H_a$: *The group variances are NOT equal*
+
+$α = 0.05$
+
+While both the 10mg and 20mg Doses proved effective compared to the 0mg (control) group, increasing the Dose from 10mg to 20mg did not yield a significant additional benefit ($p > 0.05$ according to Tukey’s test).
+
+```{r message = FALSE, warning = FALSE}
+# one-way anova
+anova_results <- aov(Difference ~ as.factor(Dose))
+
+# assumption check
+# extract residuals
+anova_res <- residuals(anova_results)
+
+# Q-Q plot of residuals
+qqnorm(anova_res, main = "Normal Q-Q Plot of Residuals")
+qqline(anova_res)
+
+# residual normality check
+shapiro.test(anova_res)
+
+# homogeneity check (since residuals normally distributed)
+bartlett.test(Difference ~ as.factor(Dose))
+
+# overview of anova results
+summary(anova_results)
+
+# all comparisons
+aov_tukey = TukeyHSD(anova_results)
+aov_tukey
+
+# annotate p-value
+anno2 = as.data.frame(aov_tukey$`as.factor(Dose)`)
+anno2 = anno2$"p adj"
+p1 = paste0("p-value = ", format(anno2[1], digits = 1))
+p2 = paste0("p-value = ", format(anno2[2], digits = 1))
+p3 = paste0("p-value = ", format(anno2[3], digits = 1))
+
+# visualize gene X reduction across doses
+plt_diff = ggplot(data = df, aes(x = Dose, y = Difference)) +
+  geom_boxplot(color = "black", width = 0.2) +
+  geom_jitter(aes(color = Dose), width = 0.1) +
+  geom_signif(annotation = c(p1, p2, p3),
+              y_position = c(1.5, 1.9, 1.1), xmin = c(1,1,2), xmax = c(2,3,3),
+              tip_length = c(0.1, 0.1)) +
+  labs(title = "Gene X Expression Across Dose Levels", color = "Dose (mg)") +
+  xlab("Dose (mg)") +
+  ylab("Relative Difference") +
+  theme_bw()
+
+plt_diff
+```
+
+**3. Do patient demographic factors (Age, Gender, Smoking status) significantly influence the treatment efficacy (Change in Gene X) when controlling for Dose?**
+
+Given the established efficacy of Treatment M, patient demographic factors (Age, Gender, Smoking status) are investigated whether they exert an independent influence on the therapeutic outcome when controlling for Dose. A multiple linear regression (additive model) was employed to adjust for these covariates.
+
+$H_0$: *The demographic factors have NO significant association with the change in Gene X expression when controlling for Dose level*
+
+$H_a$: *At least one demographic factor has a significant association with the change in Gene X expression when controlling for Dose level* 
+
+$α=0.05$
+
+The analysis confirmed that Dose Level remains the primary driver of Gene X reduction. None of the demographic factors reached statistical significance ($p > 0.05$), indicating that the treatment's efficacy is robust regardless of patient background. 
+
+The model explains 46.7% of the variance in Gene X expression (Adjusted $R^2 = 0.467$). While the effect of the Dose is highly significant ($p < 0.001$), the remaining unexplained variance ($\approx 53\%$) suggests that other unmeasured biological factors (e.g., genetic polymorphism, metabolic variability) also contribute to the inter-patient variability, as is typical in clinical data."
+
+The reliability of these results was confirmed through residual analysis. The Residuals vs. Fitted plot displayed distinct clusters corresponding to the Dose groups (Control vs. Treatment); however, the residuals within these clusters were randomly distributed around zero without distinct patterns, satisfying the linearity assumption. The Scale-Location plot confirmed homoscedasticity (equal variances across groups), and the Normal Q-Q plot validated the normality of the residuals. Although the Residuals vs. Leverage plot identified potential outliers, they fell within acceptable limits (Cook’s Distance) and were deemed non-influential to the overall model.
+
+```{r message = FALSE, warning = FALSE}
+# additive model
+lm_res <- lm(Difference ~ Dose + Age + Gender + Smoking_status)
+
+# overview of model results
+summary(lm_res)
+
+# residual check
+# residuals must be random
+par(mfrow = c(2,2)) 
+
+# residual plots
+plot(lm_res)
+```
+
+**4. Is the frequency of reported adverse events significantly associated with the administered Dose level of Treatment M?**
+
+To determine if the frequency of adverse events is significantly associated with the administered Dose, Fisher's Exact Test was performed. This test was selected over the Chi-square test because the contingency table contained cells with zero counts, which violates the assumptions required for the Chi-square approximation. 
+
+$H_0$: *There is NO relationship between Adverse effects and Dose level*
+
+$H_a$: *There is a relationship between Adverse effects and Dose level*
+
+$α=0.05$
+
+The analysis revealed a statistically significant association ($p < 0.05$), indicating that the likelihood of experiencing an adverse event is dependent on the Dose received. Since increasing the Dose from 10mg to 20mg did not yield a statistically significant improvement in Gene X reduction ($p > 0.05$, Tukey’s HSD), and higher Doses are associated with increased safety risks, the 10mg Dose appears to offer the most favorable benefit-risk profile. Future studies should prioritize the 10mg Dose or investigate strictly lower concentrations to minimize toxicity while maintaining efficacy.
+
+```{r message = FALSE, warning = FALSE}
+# contigency table
+contig = table(Adverse_effect, Dose)
+print(contig)
+
+# summarize data for plotting
+tbl = as.data.frame(contig)
+colnames(tbl) = c("events", "dose", "freq")
+
+# visualize the frequency of each type of adverse effect
+# using geom_col() as frequency is pre-calculated in tbl data frame
+plt_tbl = ggplot(data = tbl, aes(x = dose, y = freq, 
+fill = factor(events, levels = c("None", "Mild Rash and Nausea", "Heavy Rash and Nausea")))) + 
+  geom_col(position = "stack", width = 0.5, color = "black", alpha = 0.7) +
+  geom_text(data = subset(tbl, freq != 0),
+            aes(label = freq[freq>0]) ,color = "black", vjust = 2, fontface = "bold") +
+  scale_fill_brewer(palette = "Greys") +
+  ylab("Frequency of Adverse Events") +
+  xlab("Dose (mg)") +
+  labs(fill = "Type of Adverse Events") +
+  theme_bw()
+
+plt_tbl
+
+# fisher's exact test
+fisher.test(contig)
+
+```
+
+## Conclusion
+
+This study confirms that Treatment M effectively targets and reduces the expression of Gene X, a key driver of Disease A. Multivariable analysis demonstrated that this therapeutic effect is driven primarily by the administered Dose, independent of patient demographics (Age, Gender, Smoking status). 
+
+The 10mg Dose exhibited the optimal therapeutic index. It provided a statistically significant reduction in Gene X expression comparable to the 20mg Dose, but with a superior safety profile. Therefore, 10mg is recommended as the primary candidate for Phase 3 trials. Future studies should also consider investigating Doses lower than 10mg to determine if efficacy can be maintained with even fewer adverse events.
+
+## Personal Remarks
+
+Conducting this analysis reinforced the critical link between formulating a hypothesis and selecting the appropriate statistical test. Through this process, I refined my ability to select the correct methods, rigorously validate model assumptions, and translate statistical results into actionable clinical insights.
+
+I would like to acknowledge Gemini (Google) for editorial assistance and as a conversational partner to brainstorm statistical interpretation strategies during the drafting of this report.
